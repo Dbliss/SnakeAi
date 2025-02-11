@@ -233,5 +233,5 @@ def show_trained_model(model_path, n_episodes=10, sleep_time=0.1):
     env.close()
 
 if __name__ == "__main__":
-    model_file = "models/snake_ppo\ppo_snake_21389600_steps"  # Path to your saved model
+    model_file = "models/snake_ppo\ppo_snake_5000000_steps"  # Path to your saved model
     show_trained_model(model_file, n_episodes=10, sleep_time=0.25)
