@@ -19,10 +19,12 @@ def get_angle_from_direction(direction):
 class SnakeEnvPygame(SnakeEnv):
     """
     A subclass of SnakeEnv that uses images for head, body, tail, and turns.
-    Even though snake_env.py has 7 channels internally (snake, food, direction, danger, etc.),
-    we still track 'self.grid' for snake=1, food=2. We'll render based on that.
+    Even though our new SnakeEnv uses 6-channel observations internally,
+    we still use self.grid (with snake=1, food=2) and self.snake (list of segments)
+    to render the game.
     """
-    def __init__(self, grid_size=10, block_size=30):
+    def __init__(self, grid_size=5, block_size=30):
+        # Note: grid_size now matches our training environment (e.g., 5x5)
         super().__init__(grid_size=grid_size)
         self.block_size = block_size
 
@@ -33,7 +35,7 @@ class SnakeEnvPygame(SnakeEnv):
         self.screen = pygame.display.set_mode((self.width, self.height))
         pygame.display.set_caption("Snake with Images")
 
-        # Load images (assuming they are in 'images/' folder).
+        # Load images (assuming they are in the 'images/' folder)
         # Scale them to the block_size.
         self.head_images = [
             pygame.image.load("images/head_1.png"),
@@ -58,14 +60,13 @@ class SnakeEnvPygame(SnakeEnv):
         ]
         self.turn_image = pygame.transform.scale(self.turn_image, (self.block_size, self.block_size))
 
-        # A frame counter to alternate head_1/head_2 and tail_1/tail_2
+        # A frame counter to alternate head and tail images
         self.frame_count = 0
 
     def render(self):
         """
         Render the current grid using custom images for each part of the snake.
-        We'll use self.grid to find food cells (value=2) and keep using
-        self.snake (a list of segments) to render body, head, tail, and turns.
+        Food cells (value=2 in self.grid) are drawn as red squares.
         """
         if self.screen is None:
             self.screen = pygame.display.set_mode((self.width, self.height))
@@ -73,16 +74,15 @@ class SnakeEnvPygame(SnakeEnv):
         # Clear the screen.
         self.screen.fill((0, 0, 0))
 
-        # Draw food (value=2 in self.grid).
+        # Draw food (cells where self.grid == 2)
         for r in range(self.grid_size):
             for c in range(self.grid_size):
                 if self.grid[r, c] == 2:
-                    # Draw a red rectangle for food
                     rect = pygame.Rect(c * self.block_size, r * self.block_size,
-                                       self.block_size, self.block_size)
+                                         self.block_size, self.block_size)
                     pygame.draw.rect(self.screen, (255, 0, 0), rect)
 
-        # Draw the snake from self.snake (tail->head)
+        # Draw the snake (from tail to head)
         for i, segment in enumerate(self.snake):
             r, c = segment
             x = c * self.block_size
@@ -108,19 +108,19 @@ class SnakeEnvPygame(SnakeEnv):
                 self.screen.blit(rotated_head, (x, y))
 
             else:
-                # Body or turn
+                # Body or turn segment
                 prev_seg = self.snake[i - 1]
                 next_seg = self.snake[i + 1]
                 v1 = (r - prev_seg[0], c - prev_seg[1])
                 v2 = (next_seg[0] - r, next_seg[1] - c)
 
                 if v1 == v2:
-                    # Straight
+                    # Straight segment
                     body_angle = self._get_angle_from_vector(v1)
                     rotated_body = pygame.transform.rotate(self.body_image, body_angle)
                     self.screen.blit(rotated_body, (x, y))
                 else:
-                    # Turn
+                    # Turning segment
                     turn_angle = self._get_turn_angle(v1, v2)
                     rotated_turn = pygame.transform.rotate(self.turn_image, turn_angle)
                     self.screen.blit(rotated_turn, (x, y))
@@ -128,7 +128,7 @@ class SnakeEnvPygame(SnakeEnv):
         pygame.display.flip()
         self.frame_count += 1
 
-        # Process pygame events
+        # Process pygame events to keep the window responsive
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
@@ -139,13 +139,13 @@ class SnakeEnvPygame(SnakeEnv):
             self.screen = None
 
     # --------------------------------------------------------
-    # Helper methods
+    # Helper methods for rendering
     # --------------------------------------------------------
     def _get_angle_from_vector(self, v):
         """
         Return angle to rotate an up-facing image so it matches vector v.
-        v: (dr, dc) in {(-1,0),(1,0),(0,-1),(0,1)}
-        up->0°, down->180°, left->90°, right->-90°.
+        v: (dr, dc) in {(-1,0), (1,0), (0,-1), (0,1)}
+        up -> 0°, down -> 180°, left -> 90°, right -> -90°.
         """
         dr, dc = v
         if dr == -1 and dc == 0:
@@ -160,20 +160,19 @@ class SnakeEnvPygame(SnakeEnv):
 
     def _get_turn_angle(self, v1, v2):
         """
-        For turning segments, v1 is direction from prev->current,
-        v2 is direction from current->next. We define a minimal dictionary
-        for angles. Expand if needed for all turn combos.
+        For a turning segment, v1 is the vector from the previous segment to current,
+        and v2 is the vector from current to the next segment.
+        This function returns an angle to rotate the turn image.
         """
         d1 = self._vector_to_dir(v1)
         d2 = self._vector_to_dir(v2)
-
         turn_mapping = {
-            (0,3): 0,      # up->right
-            (3,1): 90,     # right->down
-            (1,2): 0,      # down->left => might need 180
-            (2,0): 90,     # left->up
+            (0, 3): 0,      # up -> right
+            (3, 1): 90,     # right -> down
+            (1, 2): 0,      # down -> left (may need adjustment)
+            (2, 0): 90,     # left -> up
         }
-        return turn_mapping.get((d1,d2), 0)
+        return turn_mapping.get((d1, d2), 0)
 
     def _vector_to_dir(self, v):
         dr, dc = v
@@ -202,7 +201,8 @@ def get_highest_model_path(models_dir="models/snake_ppo"):
     return best_model_path, max_steps
 
 def show_trained_model(model_path, n_episodes=10, sleep_time=0.2):
-    env = SnakeEnvPygame(grid_size=10, block_size=30)
+    # Create the environment with grid_size=5 (consistent with training)
+    env = SnakeEnvPygame(grid_size=5, block_size=30)
     model = PPO.load(model_path, env=env, device="cuda")
     
     for episode in range(n_episodes):
