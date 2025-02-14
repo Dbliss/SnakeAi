@@ -160,19 +160,24 @@ class SnakeEnvPygame(SnakeEnv):
 
     def _get_turn_angle(self, v1, v2):
         """
-        For a turning segment, v1 is the vector from the previous segment to current,
-        and v2 is the vector from current to the next segment.
-        This function returns an angle to rotate the turn image.
+        Calculate the correct angle for turning segments based on the direction from the previous segment
+        to the current (v1) and from the current to the next segment (v2).
         """
         d1 = self._vector_to_dir(v1)
         d2 = self._vector_to_dir(v2)
+
+        # Define turn mappings with corrected angles for specific turns.
         turn_mapping = {
-            (0, 3): 0,      # up -> right
-            (3, 1): 90,     # right -> down
-            (1, 2): 0,      # down -> left (may need adjustment)
-            (2, 0): 90,     # left -> up
+            (0, 3): 0, # up -> right
+            (3, 1): 270, # right -> down
+            (1, 2): 180, # down -> left (needs 180-degree rotation to flip)
+            (2, 0): 90, # left -> up (needs 180-degree rotation to flip)
+            (3, 0): 0,        # right -> up (needs 180-degree rotation to flip)
+            (2, 1): 180,       # left -> down
+            (1, 3): 0,         # down -> right [WRONG]
+            (0, 2): 270       # up -> left
         }
-        return turn_mapping.get((d1, d2), 0)
+        return turn_mapping.get((d1, d2), 0)  # default to 0 if not found
 
     def _vector_to_dir(self, v):
         dr, dc = v
@@ -233,4 +238,4 @@ if __name__ == "__main__":
         print("No model found.")
         exit(1)
 
-    show_trained_model(model_file, n_episodes=10, sleep_time=0.2)
+    show_trained_model(model_file, n_episodes=10, sleep_time=0.9)
