@@ -5,66 +5,41 @@ from gymnasium import spaces
 
 class SnakeEnv(gym.Env):
     """
-    Snake Environment with CNN-friendly observations.
-
-    Observation:
-      A 3D array of shape (2, grid_size, grid_size) where:
-        - Channel 0: 1 if the cell is occupied by the snake, 0 otherwise.
-        - Channel 1: 1 if the cell contains food, 0 otherwise.
-
-    Actions:
-      0 = up, 1 = down, 2 = left, 3 = right.
-
-    Note: This environment does not include a render() function.
+    Enhanced Snake Environment to prevent the snake from making the same invalid move repeatedly.
     """
     metadata = {"render_modes": []}
 
-    def __init__(self, grid_size=10):
+    def __init__(self, grid_size=5):
         super().__init__()
         self.grid_size = grid_size
 
-        # Observation space: channels-first: (2, grid_size, grid_size)
         self.observation_space = spaces.Box(
-            low=0,
-            high=1,
-            shape=(2, self.grid_size, self.grid_size),
-            dtype=np.float32
+            low=0, high=1, shape=(6, self.grid_size, self.grid_size), dtype=np.float32
         )
-        # Four discrete actions.
-        self.action_space = spaces.Discrete(4)
+        self.action_space = spaces.Discrete(4)  # Up, Down, Left, Right
 
-        # Internal state variables.
-        self.grid = None           # 2D grid: 0 = empty, 1 = snake, 2 = food.
-        self.snake = None          # List of (row, col) tuples, tail first, head last.
-        self.direction = None      # 0 = up, 1 = down, 2 = left, 3 = right.
-        self.done = None           # Episode termination flag.
+        self.grid = None
+        self.snake = None
+        self.direction = None
+        self.done = None
         self.current_step = 0
-        self.max_steps = 300
-
         self.episode_reward = 0.0
-        self.reward_threshold = -10.0
-
-        # Hunger mechanism.
         self.steps_since_last_food = 0
-        self.hunger_limit = 5 * self.grid_size
+        self.hunger_limit = self.grid_size * self.grid_size - self.grid_size
 
     def reset(self, seed=None, options=None):
-        """Reset the environment to its initial state and return the observation."""
         super().reset(seed=seed)
         self.current_step = 0
         self.done = False
         self.episode_reward = 0.0
         self.steps_since_last_food = 0
 
-        # Create an empty grid.
         self.grid = np.zeros((self.grid_size, self.grid_size), dtype=np.int32)
 
-        # Initialize the snake in the center with length 3.
         mid = self.grid_size // 2
         self.snake = [(mid, mid - 1), (mid, mid), (mid, mid + 1)]
-        self.direction = 3  # Start moving right.
+        self.direction = 3  # Start moving right
 
-        # Mark snake cells in the grid.
         for (r, c) in self.snake:
             self.grid[r, c] = 1
 
@@ -72,134 +47,188 @@ class SnakeEnv(gym.Env):
         return self._get_observation(), {}
 
     def _place_food(self):
-        """Place food randomly in an empty cell. End episode if no empty cell exists."""
-        empty_cells = [
-            (r, c)
-            for r in range(self.grid_size)
-            for c in range(self.grid_size)
-            if self.grid[r, c] == 0
-        ]
+        empty_cells = [(r, c) for r in range(self.grid_size)
+                             for c in range(self.grid_size)
+                             if self.grid[r, c] == 0]
         if not empty_cells:
             self.done = True
-            return False
+            return True
         r, c = random.choice(empty_cells)
         self.grid[r, c] = 2
-
+        return False
+    
     def _find_food_pos(self):
-        """Return the (row, col) position of food if it exists; otherwise, return None."""
-        positions = np.argwhere(self.grid == 2)
-        if len(positions) == 0:
-            return None
-        return positions[0][0], positions[0][1]
-
-    def _get_observation(self):
         """
-        Return the observation as a 3D array with shape (2, grid_size, grid_size):
-          - Channel 0: snake occupancy (1 if cell is snake, else 0).
-          - Channel 1: food occupancy (1 if cell has food, else 0).
+        Find the position of the food in the grid.
+        Returns the coordinates of the food, or None if no food is found.
         """
-        obs = np.zeros((self.grid_size, self.grid_size, 2), dtype=np.float32)
-        obs[:, :, 0] = (self.grid == 1).astype(np.float32)
-        obs[:, :, 1] = (self.grid == 2).astype(np.float32)
-        # Transpose from (H, W, C) to (C, H, W)
-        obs = obs.transpose(2, 0, 1)
-        return obs
-
-    def step(self, action):
-        """
-        Execute an action, update the environment, and return:
-          (observation, step_reward, done, truncated, info)
-        """
-        if self.done:
-            return self._get_observation(), 0.0, True, False, {}
-
-        self.current_step += 1
-
-        # Prevent immediate 180° turns.
-        opposite = {0: 1, 1: 0, 2: 3, 3: 2}
-        if action != opposite[self.direction]:
-            self.direction = action
-
-        step_reward = 0.0
-        old_distance = self._distance_to_food()
-        head_r, head_c = self.snake[-1]
-
-        # Compute new head position.
-        if self.direction == 0:      # up
-            new_r, new_c = head_r - 1, head_c
-        elif self.direction == 1:    # down
-            new_r, new_c = head_r + 1, head_c
-        elif self.direction == 2:    # left
-            new_r, new_c = head_r, head_c - 1
-        elif self.direction == 3:    # right
-            new_r, new_c = head_r, head_c + 1
-
-        # Check for collisions.
-        out_of_bounds = (new_r < 0 or new_r >= self.grid_size or new_c < 0 or new_c >= self.grid_size)
-        hits_self = False
-        if not out_of_bounds and self.grid[new_r, new_c] == 1:
-            hits_self = True
-
-        if out_of_bounds or hits_self:
-            step_reward = -10.0
-            self.done = True
-            self.episode_reward += step_reward
-            return self._get_observation(), step_reward, self.done, False, {}
-
-        # Append new head.
-        self.snake.append((new_r, new_c))
-        self.steps_since_last_food += 1
-
-        ate_food = False
-        if self.grid[new_r, new_c] == 2:
-            step_reward += 2.0  # Reward for eating food.
-            self.steps_since_last_food = 0
-            self.grid[new_r, new_c] = 0  # Remove food.
-            ate_food = True
-        else:
-            # Remove tail if no food was eaten.
-            tail_r, tail_c = self.snake.pop(0)
-            self.grid[tail_r, tail_c] = 0
-
-        # Mark new head as occupied.
-        self.grid[new_r, new_c] = 1
-
-        # If food was eaten, place new food.
-        if ate_food:
-            result = self._place_food()
-            if not result:
-                step_reward += 100
-
-        # Small step penalty.
-        step_reward -= 0.01
-
-        # Reward shaping: reward if closer to food.
-        new_distance = self._distance_to_food()
-        if new_distance < old_distance:
-            step_reward += 0.1
-        elif new_distance > old_distance:
-            step_reward -= 0.1
-
-        self.episode_reward += step_reward
-
-        # Hunger: if too many steps pass without food, penalize.
-        if self.steps_since_last_food > self.hunger_limit:
-            step_reward += self.reward_threshold
-        if self.episode_reward < self.reward_threshold:
-            self.done = True
-
-        truncated = False
-        if self.current_step >= self.max_steps:
-            truncated = True
-            self.done = True
-
-        return self._get_observation(), step_reward, self.done, truncated, {}
-
+        for r in range(self.grid_size):
+            for c in range(self.grid_size):
+                if self.grid[r][c] == 2:  # Assuming '2' marks the food
+                    return r, c
+        return None
+    
     def _distance_to_food(self):
-        """Compute Manhattan distance from the snake's head to the food."""
         head_r, head_c = self.snake[-1]
         food_pos = self._find_food_pos()
         if food_pos is None:
             return 0
-        food_r, food_c = food_pos
-        return abs(head_r - food_r) + abs(head_c - food_c)
+        return abs(head_r - food_pos[0]) + abs(head_c - food_pos[1])
+
+    def _get_observation(self):
+        """
+        Update observation with possible move checks to avoid hitting walls or itself.
+        """
+        obs = np.zeros((self.grid_size, self.grid_size, 6), dtype=np.float32)
+
+        obs[:, :, 0] = (self.grid == 1).astype(np.float32)
+        obs[:, :, 1] = (self.grid == 2).astype(np.float32)
+        obs[:, :, 2] = self.direction / 3.0
+
+        head_r, head_c = self.snake[-1]
+        possible_moves = [
+            (head_r - 1, head_c),  # Up
+            (head_r + 1, head_c),  # Down
+            (head_r, head_c - 1),  # Left
+            (head_r, head_c + 1)   # Right
+        ]
+
+        for i, (r_next, c_next) in enumerate(possible_moves):
+            collision = (r_next < 0 or r_next >= self.grid_size or
+                         c_next < 0 or c_next >= self.grid_size or
+                         self.grid[r_next, c_next] == 1)
+            if collision:
+                obs[r_next % self.grid_size, c_next % self.grid_size, 3] = 1.0
+
+        obs[:, :, 4] = head_r / (self.grid_size - 1)
+        obs[:, :, 5] = head_c / (self.grid_size - 1)
+
+        return obs.transpose(2, 0, 1)
+    
+    def compute_free_space(self, start):
+        """
+        Compute the number of reachable cells (free space) from the start position
+        using a flood fill algorithm. The snake's body (value 1) and walls act as obstacles.
+        """
+        grid_copy = self.grid.copy()
+        visited = np.zeros_like(grid_copy, dtype=bool)
+        stack = [start]
+        free_count = 0
+
+        while stack:
+            r, c = stack.pop()
+            if not (0 <= r < self.grid_size and 0 <= c < self.grid_size):
+                continue
+            if visited[r, c]:
+                continue
+            if grid_copy[r, c] == 1:
+                continue  # Obstacle: snake body
+            visited[r, c] = True
+            free_count += 1
+            # Add neighbors
+            stack.extend([(r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)])
+        return free_count
+
+    def step(self, action):
+        step_reward = 0.0
+        if self.done:
+            return self._get_observation(), 0.0, True, False, {}
+
+        self.current_step += 1
+        head_r, head_c = self.snake[-1]
+        old_distance = self._distance_to_food()
+        
+        # Compute free space before the move
+        free_space_before = self.compute_free_space((head_r, head_c))
+        
+        # Determine valid moves as before
+        valid_moves = {}
+        directions = [(head_r - 1, head_c), (head_r + 1, head_c),
+                    (head_r, head_c - 1), (head_r, head_c + 1)]
+        for idx, (new_r, new_c) in enumerate(directions):
+            if 0 <= new_r < self.grid_size and 0 <= new_c < self.grid_size and self.grid[new_r][new_c] != 1:
+                valid_moves[idx] = (new_r, new_c)
+        
+        # If chosen action isn't valid, pick a random valid action.
+        if action not in valid_moves:
+            if not valid_moves:
+                self.done = True
+                return self._get_observation(), -10.0, self.done, False, {}
+            action = random.choice(list(valid_moves.keys()))
+            step_reward -= 1.0
+        
+        new_r, new_c = valid_moves[action]
+        
+        # Execute the move
+        self.snake.append((new_r, new_c))
+        
+        # Compute free space after the move
+        free_space_after = self.compute_free_space((new_r, new_c))
+        
+        # Base reward shaping based on distance to food
+        new_distance = self._distance_to_food()
+        if new_distance < old_distance:
+            step_reward += 1.0  # Reward for moving closer to food
+        elif new_distance > old_distance:
+            step_reward -= 1.0  # Penalty for moving away from food
+
+        # Discourage moves that heavily reduce free space:
+        if free_space_after < 0.5 * free_space_before:
+            step_reward -= 2.0  # Adjust this value as needed
+
+        # Check for food consumption
+        if self.grid[new_r][new_c] == 2:  # Food is eaten
+            step_reward += 10.0  # Large reward for eating food
+            self.steps_since_last_food = 0
+            self.grid[new_r][new_c] = 0
+            self._place_food()  # Place new food
+            # Do NOT remove the tail; the snake grows naturally.
+        else:
+            tail_r, tail_c = self.snake.pop(0)
+            self.grid[tail_r][tail_c] = 0
+
+        self.grid[new_r][new_c] = 1
+        self.direction = action
+
+        # Additional survival/hunger related penalties or bonuses can be applied here.
+
+        return self._get_observation(), step_reward, self.done, False, {}
+
+    def find_valid_move(self):
+        """
+        Check all possible moves and return a valid one if available, else None.
+        """
+        head_r, head_c = self.snake[-1]
+        directions = [0, 1, 2, 3]  # Up, Down, Left, Right
+        valid_moves = []
+
+        for dir in directions:
+            delta = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+            new_r = head_r + delta[dir][0]
+            new_c = head_c + delta[dir][1]
+            if not (new_r < 0 or new_r >= self.grid_size or new_c < 0 or new_c >= self.grid_size or self.grid[new_r, new_c] == 1):
+                valid_moves.append(dir)
+
+        return random.choice(valid_moves) if valid_moves else None
+
+    def update_snake_position(self, action):
+        """
+        Update the position of the snake in the grid based on the action.
+        """
+        head_r, head_c = self.snake[-1]
+        delta = [(-1, 0), (1, 0), (0, -1), (0, 1)]  # Up, Down, Left, Right deltas
+        new_r = head_r + delta[action][0]
+        new_c = head_c + delta[action][1]
+
+        self.snake.append((new_r, new_c))
+        if self.grid[new_r, new_c] == 2:
+            # Ate food, do not remove the tail (extend the snake)
+            self.grid[new_r, new_c] = 0
+            self._place_food()
+        else:
+            # Move normally by removing the tail
+            tail_r, tail_c = self.snake.pop(0)
+            self.grid[tail_r, tail_c] = 0
+
+        self.grid[new_r, new_c] = 1  # Update the head position in the grid
+        self.direction = action  # Update the current direction based on the action taken
