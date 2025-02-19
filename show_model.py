@@ -170,11 +170,11 @@ class SnakeEnvPygame(SnakeEnv):
         turn_mapping = {
             (0, 3): 0, # up -> right
             (3, 1): 270, # right -> down
-            (1, 2): 180, # down -> left (needs 180-degree rotation to flip)
-            (2, 0): 90, # left -> up (needs 180-degree rotation to flip)
-            (3, 0): 0,        # right -> up (needs 180-degree rotation to flip)
-            (2, 1): 180,       # left -> down
-            (1, 3): 0,         # down -> right [WRONG]
+            (1, 2): 180, # down -> left
+            (2, 0): 90, # left -> up 
+            (3, 0): 180, # right -> up 
+            (2, 1): 0,       # left -> down
+            (1, 3): 90, # down -> right
             (0, 2): 270       # up -> left
         }
         return turn_mapping.get((d1, d2), 0)  # default to 0 if not found

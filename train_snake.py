@@ -162,7 +162,7 @@ def train_snake():
             policy_kwargs=policy_kwargs
         )
     
-    total_timesteps = 1_000_000
+    total_timesteps = 100_000
     callback = PlottingCallback()
     
     print(f"Training for {total_timesteps} timesteps with {n_envs} parallel envs (n_steps=2048)...")
