@@ -5,7 +5,7 @@ from gymnasium import spaces
 
 class SnakeEnv(gym.Env):
     """
-    Enhanced Snake Environment to prevent the snake from making the same invalid move repeatedly.
+    Enhanced Snake Environment with improved path planning and space management.
     """
     metadata = {"render_modes": []}
 
@@ -25,7 +25,7 @@ class SnakeEnv(gym.Env):
         self.current_step = 0
         self.episode_reward = 0.0
         self.steps_since_last_food = 0
-        self.hunger_limit = self.grid_size * self.grid_size - self.grid_size
+        self.hunger_limit = self.grid_size * self.grid_size
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -58,13 +58,9 @@ class SnakeEnv(gym.Env):
         return False
     
     def _find_food_pos(self):
-        """
-        Find the position of the food in the grid.
-        Returns the coordinates of the food, or None if no food is found.
-        """
         for r in range(self.grid_size):
             for c in range(self.grid_size):
-                if self.grid[r][c] == 2:  # Assuming '2' marks the food
+                if self.grid[r][c] == 2:
                     return r, c
         return None
     
@@ -76,9 +72,6 @@ class SnakeEnv(gym.Env):
         return abs(head_r - food_pos[0]) + abs(head_c - food_pos[1])
 
     def _get_observation(self):
-        """
-        Update observation with possible move checks to avoid hitting walls or itself.
-        """
         obs = np.zeros((self.grid_size, self.grid_size, 6), dtype=np.float32)
 
         obs[:, :, 0] = (self.grid == 1).astype(np.float32)
@@ -106,11 +99,8 @@ class SnakeEnv(gym.Env):
         return obs.transpose(2, 0, 1)
     
     def compute_free_space(self, start):
-        """
-        Compute the number of reachable cells (free space) from the start position
-        using a flood fill algorithm. The snake's body (value 1) and walls act as obstacles.
-        """
         grid_copy = self.grid.copy()
+        grid_copy[start[0], start[1]] = 0
         visited = np.zeros_like(grid_copy, dtype=bool)
         stack = [start]
         free_count = 0
@@ -125,9 +115,8 @@ class SnakeEnv(gym.Env):
                 continue  # Obstacle: snake body
             visited[r, c] = True
             free_count += 1
-            # Add neighbors
             stack.extend([(r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)])
-        return free_count
+        return free_count - 1
 
     def step(self, action):
         step_reward = 0.0
@@ -141,7 +130,7 @@ class SnakeEnv(gym.Env):
         # Compute free space before the move
         free_space_before = self.compute_free_space((head_r, head_c))
         
-        # Determine valid moves as before
+        # Determine valid moves
         valid_moves = {}
         directions = [(head_r - 1, head_c), (head_r + 1, head_c),
                     (head_r, head_c - 1), (head_r, head_c + 1)]
@@ -149,86 +138,72 @@ class SnakeEnv(gym.Env):
             if 0 <= new_r < self.grid_size and 0 <= new_c < self.grid_size and self.grid[new_r][new_c] != 1:
                 valid_moves[idx] = (new_r, new_c)
         
-        # If chosen action isn't valid, pick a random valid action.
+        # Handle invalid action
         if action not in valid_moves:
             if not valid_moves:
                 self.done = True
                 return self._get_observation(), -10.0, self.done, False, {}
             action = random.choice(list(valid_moves.keys()))
-            step_reward -= 1.0
+            step_reward -= 2.0  # Penalty for invalid action
         
         new_r, new_c = valid_moves[action]
         
-        # Execute the move
+        # Check if new position is food before updating the grid
+        ate_food = self.grid[new_r][new_c] == 2
+        
+        # Update snake and grid
         self.snake.append((new_r, new_c))
+        self.grid[new_r][new_c] = 1  # Immediately mark new head position
         
-        # Compute free space after the move
-        free_space_after = self.compute_free_space((new_r, new_c))
-        
-        # Base reward shaping based on distance to food
-        new_distance = self._distance_to_food()
-        if new_distance < old_distance:
-            step_reward += 1.0  # Reward for moving closer to food
-        elif new_distance > old_distance:
-            step_reward -= 1.0  # Penalty for moving away from food
-
-        # Discourage moves that heavily reduce free space:
-        if free_space_after < 0.5 * free_space_before:
-            step_reward -= 2.0  # Adjust this value as needed
-
-        # Check for food consumption
-        if self.grid[new_r][new_c] == 2:  # Food is eaten
-            step_reward += 10.0  # Large reward for eating food
+        if ate_food:
+            step_reward += 20.0
             self.steps_since_last_food = 0
-            self.grid[new_r][new_c] = 0
-            self._place_food()  # Place new food
-            # Do NOT remove the tail; the snake grows naturally.
+            self._place_food()
         else:
+            # Remove tail
             tail_r, tail_c = self.snake.pop(0)
             self.grid[tail_r][tail_c] = 0
+        
+        # Compute free space after the move with updated grid
+        free_space_after = self.compute_free_space((new_r, new_c))
+        
+        # Reward shaping based on distance to food
+        new_distance = self._distance_to_food()
+        if new_distance < old_distance:
+            step_reward += 0.5 / new_distance if new_distance != 0 else 0.5
+        elif new_distance > old_distance:
+            step_reward -= 0.5 / old_distance if old_distance != 0 else 0.5
 
-        self.grid[new_r][new_c] = 1
+        # Penalize reduction in accessible space
+        if free_space_after < 0.7 * free_space_before:
+            step_reward -= 2.0
+        elif free_space_after < 0.3 * free_space_before:
+            step_reward -= 4.0
+
+        snake_length = len(self.snake)
+        if snake_length >= 24:
+            step_reward += 35
+            print("HE DID IT!!")
+
+        # Hunger penalty
+        self.steps_since_last_food += 1
+        if self.steps_since_last_food > self.hunger_limit:
+            step_reward -= 15.0
+            self.done = True
+
         self.direction = action
-
-        # Additional survival/hunger related penalties or bonuses can be applied here.
-
         return self._get_observation(), step_reward, self.done, False, {}
 
     def find_valid_move(self):
-        """
-        Check all possible moves and return a valid one if available, else None.
-        """
         head_r, head_c = self.snake[-1]
-        directions = [0, 1, 2, 3]  # Up, Down, Left, Right
+        directions = [0, 1, 2, 3]
         valid_moves = []
 
         for dir in directions:
             delta = [(-1, 0), (1, 0), (0, -1), (0, 1)]
             new_r = head_r + delta[dir][0]
             new_c = head_c + delta[dir][1]
-            if not (new_r < 0 or new_r >= self.grid_size or new_c < 0 or new_c >= self.grid_size or self.grid[new_r, new_c] == 1):
+            if 0 <= new_r < self.grid_size and 0 <= new_c < self.grid_size and self.grid[new_r][new_c] != 1:
                 valid_moves.append(dir)
 
         return random.choice(valid_moves) if valid_moves else None
-
-    def update_snake_position(self, action):
-        """
-        Update the position of the snake in the grid based on the action.
-        """
-        head_r, head_c = self.snake[-1]
-        delta = [(-1, 0), (1, 0), (0, -1), (0, 1)]  # Up, Down, Left, Right deltas
-        new_r = head_r + delta[action][0]
-        new_c = head_c + delta[action][1]
-
-        self.snake.append((new_r, new_c))
-        if self.grid[new_r, new_c] == 2:
-            # Ate food, do not remove the tail (extend the snake)
-            self.grid[new_r, new_c] = 0
-            self._place_food()
-        else:
-            # Move normally by removing the tail
-            tail_r, tail_c = self.snake.pop(0)
-            self.grid[tail_r, tail_c] = 0
-
-        self.grid[new_r, new_c] = 1  # Update the head position in the grid
-        self.direction = action  # Update the current direction based on the action taken
